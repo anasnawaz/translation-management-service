@@ -12,5 +12,5 @@ Route::middleware('throttle:auth')->group(function (): void {
 Route::middleware(['auth:sanctum', 'throttle:api'])->group(function (): void {
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::apiResource('translations', TranslationController::class)->except(['index']);
+    Route::apiResource('translations', TranslationController::class);
 });
