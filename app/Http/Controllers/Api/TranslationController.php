@@ -3,14 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Translation\ListTranslationRequest;
 use App\Http\Requests\Translation\StoreTranslationRequest;
 use App\Http\Requests\Translation\UpdateTranslationRequest;
 use App\Http\Resources\TranslationResource;
 use App\Models\Translation;
 use App\Services\TranslationService;
 use Illuminate\Http\JsonResponse;
-use App\Http\Requests\Translation\ListTranslationRequest;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+
 class TranslationController extends Controller
 {
     public function __construct(
