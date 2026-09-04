@@ -357,6 +357,10 @@ These are suggestions only and were explicitly **not** implemented as part of th
 - Soft deletes and/or an audit trail for translation changes.
 - API versioning (e.g. `/api/v1/...`) ahead of any breaking change.
 
+## 28. API documentation
+
+A complete OpenAPI 3.1 specification of this API is available at [`docs/openapi.yaml`](docs/openapi.yaml). Open it in Swagger Editor, Swagger UI, Postman, Insomnia, or another OpenAPI-compatible client to browse the endpoints or try requests.
+
 ---
 
 ### Performance notes (read before interpreting any numbers above)
