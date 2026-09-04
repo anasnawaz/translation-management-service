@@ -9,6 +9,7 @@ use App\Http\Requests\Translation\UpdateTranslationRequest;
 use App\Http\Resources\TranslationResource;
 use App\Models\Translation;
 use App\Services\TranslationService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
@@ -59,7 +60,7 @@ class TranslationController extends Controller
         $query->when(
             $filters['content'] ?? null,
             function ($query, string $content): void {
-                $query->whereFullText('translations.content', $content);
+                $this->applyContentSearch($query, $content);
             }
         );
 
@@ -90,19 +91,20 @@ class TranslationController extends Controller
             $filters['search'] ?? null,
             function ($query, string $search): void {
                 $query->where(function ($nestedQuery) use ($search): void {
-                    $nestedQuery
-                        ->whereHas(
-                            'translationKey',
-                            fn ($keyQuery) => $keyQuery->where(
-                                'key',
-                                'like',
-                                strtolower(trim($search)).'%'
-                            )
+                    $nestedQuery->whereHas(
+                        'translationKey',
+                        fn ($keyQuery) => $keyQuery->where(
+                            'key',
+                            'like',
+                            strtolower(trim($search)).'%'
                         )
-                        ->orWhereFullText(
-                            'translations.content',
-                            $search
-                        );
+                    );
+
+                    $this->applyContentSearch(
+                        $nestedQuery,
+                        $search,
+                        or: true
+                    );
                 });
             }
         );
@@ -157,5 +159,42 @@ class TranslationController extends Controller
         $translation->delete();
 
         return response()->json(null, 204);
+    }
+
+    /**
+     * Apply a content search to the given query.
+     *
+     * MySQL uses the `content` FULLTEXT index via `whereFullText()`. SQLite
+     * (used by the automated test suite) does not support FULLTEXT
+     * searching, so a `LIKE` fallback is used there instead. This keeps the
+     * MySQL production optimization intact while remaining testable on
+     * SQLite.
+     *
+     * @param  Builder<Translation>  $query
+     */
+    private function applyContentSearch(
+        Builder $query,
+        string $content,
+        bool $or = false
+    ): void {
+        if ($this->supportsFullTextSearch($query)) {
+            $or
+                ? $query->orWhereFullText('translations.content', $content)
+                : $query->whereFullText('translations.content', $content);
+
+            return;
+        }
+
+        $or
+            ? $query->orWhere('translations.content', 'like', '%'.$content.'%')
+            : $query->where('translations.content', 'like', '%'.$content.'%');
+    }
+
+    /**
+     * @param  Builder<Translation>  $query
+     */
+    private function supportsFullTextSearch(Builder $query): bool
+    {
+        return $query->getConnection()->getDriverName() === 'mysql';
     }
 }

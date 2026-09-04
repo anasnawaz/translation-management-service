@@ -14,7 +14,9 @@ return new class extends Migration
         Schema::create('translation_keys', function (Blueprint $table) {
             $table->id();
             $table->string('key')->unique();
-            $table->string('description')->nullable();
+            // Matches the 500-character max enforced by StoreTranslationRequest
+            // and UpdateTranslationRequest's `description` validation rule.
+            $table->string('description', 500)->nullable();
             $table->timestamps();
         });
     }

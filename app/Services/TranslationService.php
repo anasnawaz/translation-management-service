@@ -6,6 +6,7 @@ use App\Models\Locale;
 use App\Models\Tag;
 use App\Models\Translation;
 use App\Models\TranslationKey;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -27,17 +28,15 @@ class TranslationService
                 ['description' => $data['description'] ?? null]
             );
 
+            // Friendly pre-check: catches the common case cheaply and with
+            // a normal query, before anyone has started writing.
             $alreadyExists = Translation::query()
                 ->where('translation_key_id', $translationKey->id)
                 ->where('locale_id', $locale->id)
                 ->exists();
 
             if ($alreadyExists) {
-                throw ValidationException::withMessages([
-                    'key' => [
-                        'A translation for this key and locale already exists.',
-                    ],
-                ]);
+                throw $this->duplicateTranslationException();
             }
 
             if (
@@ -49,11 +48,24 @@ class TranslationService
                 ]);
             }
 
-            $translation = Translation::query()->create([
-                'translation_key_id' => $translationKey->id,
-                'locale_id' => $locale->id,
-                'content' => $data['content'],
-            ]);
+            // Race-condition fallback: two concurrent requests can both
+            // pass the exists() check above before either has inserted.
+            // The `translations_key_locale_unique` database constraint is
+            // the real guarantee against duplicates; if it rejects this
+            // insert, convert that into the same clean validation
+            // response rather than letting a raw database exception
+            // surface. Any other query failure (e.g. a connection error,
+            // or a violation of some other constraint) is intentionally
+            // left to propagate untouched.
+            try {
+                $translation = Translation::query()->create([
+                    'translation_key_id' => $translationKey->id,
+                    'locale_id' => $locale->id,
+                    'content' => $data['content'],
+                ]);
+            } catch (UniqueConstraintViolationException) {
+                throw $this->duplicateTranslationException();
+            }
 
             $this->syncTags($translation, $data['tags'] ?? []);
 
@@ -95,6 +107,15 @@ class TranslationService
                 'tags',
             ]);
         });
+    }
+
+    private function duplicateTranslationException(): ValidationException
+    {
+        return ValidationException::withMessages([
+            'key' => [
+                'A translation for this key and locale already exists.',
+            ],
+        ]);
     }
 
     private function syncTags(

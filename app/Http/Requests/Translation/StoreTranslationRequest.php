@@ -14,9 +14,19 @@ class StoreTranslationRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        // Note: `locale` is read via input() rather than the magic
+        // `$this->locale` property accessor. Symfony's base Request class
+        // declares a real (protected) `$locale` property used for HTTP
+        // locale negotiation, which shadows Laravel's `__get()` magic
+        // getter for request input of the same name. Accessing
+        // `$this->locale` here would silently return the request's HTTP
+        // locale (defaulting to `config('app.locale')`, i.e. "en") instead
+        // of the submitted `locale` field, causing every translation to
+        // be created for the wrong locale unless the client happened to
+        // send "en".
         $this->merge([
             'key' => strtolower(trim((string) $this->key)),
-            'locale' => strtolower(trim((string) $this->locale)),
+            'locale' => strtolower(trim((string) $this->input('locale'))),
             'tags' => collect($this->input('tags', []))
                 ->map(fn (mixed $tag): string => strtolower(trim((string) $tag)))
                 ->filter()
