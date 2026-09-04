@@ -40,7 +40,7 @@ The service exposes a JSON API for storing translation strings under a shared `k
 ## 5. Installation
 
 ```bash
-git clone <repository-url> translation-management-service
+git clone https://github.com/anasnawaz/translation-management-service.git translation-management-service
 cd translation-management-service
 
 composer install
