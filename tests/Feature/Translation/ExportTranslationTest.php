@@ -240,7 +240,7 @@ class ExportTranslationTest extends TestCase
         $response = $this->getJson('/api/locales/en/translations/export');
 
         $response->assertOk();
-        $this->assertSame('{}', $response->getContent());
+        $this->assertSame('{}', $response->streamedContent());
     }
 
     public function test_updating_content_is_immediately_reflected_in_the_next_export_request(): void
@@ -270,7 +270,7 @@ class ExportTranslationTest extends TestCase
 
         $initial = $this->getJson('/api/locales/en/translations/export');
         $initial->assertOk();
-        $this->assertSame('{}', $initial->getContent());
+        $this->assertSame('{}', $initial->streamedContent());
 
         $this->postJson('/api/translations', [
             'key' => 'new.key',
@@ -333,6 +333,61 @@ class ExportTranslationTest extends TestCase
         $this->assertSame(
             'Visit "https://example.com?a=1&b=2" & <enjoy>',
             $response->json('link')
+        );
+    }
+
+    public function test_streamed_export_remains_complete_after_the_flush_boundary(): void
+    {
+        $this->actingAsUser();
+
+        $locale = $this->activeLocale('en', 'English');
+
+        for ($number = 1; $number <= 501; $number++) {
+            $this->createTranslation(
+                translationKey: $this->createTranslationKey(
+                    key: sprintf('stream.key.%03d', $number)
+                ),
+                locale: $locale,
+                content: "Content {$number}"
+            );
+        }
+
+        $response = $this->getJson(
+            '/api/locales/en/translations/export'
+        );
+
+        $response
+            ->assertOk()
+            ->assertHeader(
+                'Content-Type',
+                'application/json; charset=utf-8'
+            )
+            ->assertHeader('X-Accel-Buffering', 'no');
+
+        $content = $response->streamedContent();
+
+        $translations = json_decode(
+            $content,
+            true,
+            512,
+            JSON_THROW_ON_ERROR
+        );
+
+        $this->assertCount(501, $translations);
+
+        $this->assertSame(
+            'Content 1',
+            $translations['stream.key.001']
+        );
+
+        $this->assertSame(
+            'Content 500',
+            $translations['stream.key.500']
+        );
+
+        $this->assertSame(
+            'Content 501',
+            $translations['stream.key.501']
         );
     }
 }

@@ -8,13 +8,14 @@ use App\Models\Locale;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ExportTranslationController extends Controller
 {
     public function __invoke(
         ExportTranslationRequest $request,
         string $locale
-    ): JsonResponse {
+    ): JsonResponse|StreamedResponse {
         $localeModel = Locale::query()
             ->select(['id', 'code'])
             ->where('code', strtolower($locale))
@@ -22,10 +23,6 @@ class ExportTranslationController extends Controller
             ->first();
 
         if (! $localeModel) {
-            // The method return type is JsonResponse; the plain response()
-            // helper returns a base Illuminate\Http\Response, which raises
-            // a TypeError here instead of producing the intended 404. Using
-            // response()->json() matches the declared return type.
             return response()->json([
                 'message' => 'Requested resource was not found.',
                 'errors' => [
@@ -45,10 +42,11 @@ class ExportTranslationController extends Controller
                 '=',
                 'translations.translation_key_id'
             )
-            ->where(
-                'translations.locale_id',
-                $localeModel->id
-            )
+            ->select([
+                'translation_keys.key as k',
+                'translations.content as c',
+            ])
+            ->where('translations.locale_id', $localeModel->id)
             ->when(
                 $tags !== [],
                 function (Builder $query) use ($tags): void {
@@ -73,18 +71,46 @@ class ExportTranslationController extends Controller
                 }
             );
 
-        $translations = $query->pluck(
-            'translations.content',
-            'translation_keys.key'
-        );
+        return response()->stream(
+            function () use ($query): void {
+                echo '{';
 
-        // An empty keyed collection encodes as a JSON array ([]) rather
-        // than an object ({}), since json_encode() has no keys to infer
-        // an associative structure from. Frontend consumers expect a flat
-        // object of key/content pairs regardless of how many translations
-        // exist, so an empty result is cast to an empty object explicitly.
-        return response()->json(
-            $translations->isEmpty() ? (object) [] : $translations
+                $first = true;
+                $rowCount = 0;
+
+                foreach ($query->cursor() as $row) {
+                    if (! $first) {
+                        echo ',';
+                    }
+
+                    echo json_encode((string) $row->k, JSON_UNESCAPED_UNICODE),
+                    ':',
+                    json_encode((string) $row->c, JSON_UNESCAPED_UNICODE);
+
+                    $first = false;
+
+                    if (++$rowCount % 500 === 0) {
+                        if (ob_get_level() > 0) {
+                            @ob_flush();
+                        }
+
+                        flush();
+                    }
+                }
+
+                echo '}';
+
+                if (ob_get_level() > 0) {
+                    @ob_flush();
+                }
+
+                flush();
+            },
+            200,
+            [
+                'Content-Type' => 'application/json; charset=utf-8',
+                'X-Accel-Buffering' => 'no',
+            ]
         );
     }
 }
