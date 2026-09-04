@@ -349,8 +349,6 @@ If a MySQL server is unavailable in your environment, this verification cannot b
 These are suggestions only and were explicitly **not** implemented as part of this review, per the task's scope:
 
 - Response/query caching for hot read paths (e.g. per-locale export).
-- OpenAPI/Swagger API documentation.
-- Containerization (Docker/Docker Compose) for local environment setup.
 - Redis for cache/queue/session drivers in production.
 - Laravel Octane for higher-throughput request handling.
 - Per-user or per-team ownership and authorization scoping on translations.
@@ -361,11 +359,56 @@ These are suggestions only and were explicitly **not** implemented as part of th
 
 A complete OpenAPI 3.1 specification of this API is available at [`docs/openapi.yaml`](docs/openapi.yaml). Open it in Swagger Editor, Swagger UI, Postman, Insomnia, or another OpenAPI-compatible client to browse the endpoints or try requests.
 
+## 29. Docker setup
+
+A minimal, three-service Docker Compose setup (`app` = PHP 8.4-FPM, `nginx`, `mysql` 8) is included for local development. It does not replace sections 5-7 (a plain local PHP/MySQL install still works); it's an alternative that doesn't require PHP or MySQL installed on the host at all.
+
+**First-time setup:**
+
+```bash
+cp .env.example .env
+docker compose build
+docker compose run --rm app php artisan key:generate
+docker compose up -d
+docker compose exec app php artisan migrate --seed
+```
+
+`key:generate` works reliably here because `docker-compose.yml` bind-mounts only the single `.env` file into the `app` container (`./.env:/var/www/html/.env`) — never the whole project directory or `vendor/`, which would shadow the Composer dependencies already installed into the image at build time. Because it's the same file on disk, `key:generate` writes the generated `APP_KEY` straight back to your host `.env`, and it's picked up by every container on the next `docker compose up`.
+
+**Where things run:**
+
+- Application: `http://localhost:8080` (Nginx; forwards PHP requests to the `app` container internally).
+- MySQL host from inside containers (`app`, or any container on the same Compose network): `mysql`.
+- MySQL is **not** exposed to the host by default — there is no `ports:` mapping on the `mysql` service, so `127.0.0.1:3306` on your machine will not reach it. It is only reachable from other containers on the Compose network, as `mysql:3306`. If you need a host-side database client, either add a `ports: ["3306:3306"]` mapping to the `mysql` service yourself, or connect through `docker compose exec mysql mysql -u root -proot_password`.
+
+**Local Docker development credentials** (set in `docker-compose.yml`, not secrets): database `translation_management`, user `translation_user` / `translation_password`, root password `root_password`. These override the `.env` file's own `DB_*` values only inside the containers (`.env` itself is unaffected and still describes a plain local MySQL install, per section 6).
+
+**Everyday commands:**
+
+```bash
+docker compose exec app php artisan test
+docker compose exec app ./vendor/bin/pint --test
+docker compose exec app php artisan translations:generate 100000 --fresh
+docker compose logs -f
+docker compose down
+```
+
+`php artisan test` inside the container still runs against SQLite in-memory (phpunit.xml forces this regardless of the container's MySQL connection), exactly as it does outside Docker.
+
+**Stopping and resetting:**
+
+```bash
+docker compose down       # stops and removes containers; the mysql-data volume is kept
+docker compose down -v    # WARNING: also deletes the mysql-data named volume, permanently destroying the MySQL database
+```
+
+Since the application code is baked into the `app` image at build time (not bind-mounted, so Composer dependencies can't be accidentally hidden), a code change requires `docker compose build` (or `docker compose up -d --build`) again to take effect — this setup does not hot-reload PHP file edits.
+
 ---
 
 ### Performance notes (read before interpreting any numbers above)
 
 - **Local export timing**: measured locally at approximately **0.82–0.98 seconds** for a **2.65MB** export response — not below 500ms. Do not treat 500ms as an achieved figure; it is not.
 - **Local startup overhead**: local Windows/PHP development environment startup overhead was measured at approximately **300ms**, independent of and additional to request-handling time — relevant context when interpreting any wall-clock figure measured locally rather than in a production-like environment.
-- **The automated `PerformanceTest` group is a regression smoke test**, not an authoritative SLA benchmark (see the class docblock in `tests/Feature/Performance/PerformanceTest.php` for the full reasoning). Its own SQLite-suite timings — reported for context only, not as a production claim — were, at time of writing: full normal suite (101 tests, 329 assertions) in ~1.6s; performance group alone (3 tests, 10 assertions) in ~0.3–0.4s. These numbers describe test-suite execution speed on this development machine, not API response latency.
+- **The automated `PerformanceTest` group is a regression smoke test**, not an authoritative SLA benchmark (see the class docblock in `tests/Feature/Performance/PerformanceTest.php` for the full reasoning). Its own SQLite-suite timings — reported for context only, not as a production claim — were, at time of writing: full normal suite — 101 tests, 329 assertions, **68.61s**; performance group alone (3 tests, 10 assertions) in ~0.3–0.4s. These numbers describe test-suite execution time on this development machine, not API response latency, and can vary considerably run to run depending on machine load, container/virtualization overhead, and whether OPcache is warm.
 - No production-representative (real MySQL, OPcache-warmed, non-test-harness) latency benchmark has been produced for this document. Section 26 lists this as a known limitation.

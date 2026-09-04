@@ -13,7 +13,9 @@ info:
 
 servers:
   - url: http://localhost:8000
-    description: Local development
+    description: Local PHP development
+  - url: http://localhost:8080
+    description: Docker Compose
 
 tags:
   - name: Authentication
@@ -777,6 +779,7 @@ components:
           description: Must reference an existing, active locale code.
         content:
           type: string
+          minLength: 1
         tags:
           type: array
           maxItems: 20
@@ -784,7 +787,7 @@ components:
             type: string
             maxLength: 50
             pattern: '^[a-z0-9._-]+$'
-          description: Normalized to lowercase/trimmed/de-duplicated before validation. Duplicates within the array are rejected (`distinct`).
+          description: Normalized to lowercase, trimmed, and de-duplicated before validation.
       required: [key, locale, content]
 
     TranslationUpdateRequest:
@@ -793,6 +796,7 @@ components:
       properties:
         content:
           type: string
+          minLength: 1
         description:
           type: [string, 'null']
           maxLength: 500
@@ -803,7 +807,7 @@ components:
             type: string
             maxLength: 50
             pattern: '^[a-z0-9._-]+$'
-          description: Normalized to lowercase/trimmed/de-duplicated before validation. Duplicates within the array are rejected (`distinct`). When present, replaces the translation's full tag set.
+          description: Normalized to lowercase, trimmed, and de-duplicated before validation. When present, replaces the translation's complete tag set.
 
     TranslationResourceResponse:
       type: object

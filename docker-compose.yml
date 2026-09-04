@@ -1,0 +1,74 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: translation-management-service-app:local
+    working_dir: /var/www/html
+    # Loads every value from the local .env (APP_KEY, APP_NAME, mail
+    # settings, etc.); the DB_* values below are then overridden with the
+    # Docker-network-specific connection details, since the .env file's
+    # own DB_HOST/DB_USERNAME/DB_PASSWORD are meant for a host-installed
+    # MySQL, not the `mysql` service in this Compose file.
+    env_file:
+      - .env
+    environment:
+      APP_ENV: local
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: translation_management
+      DB_USERNAME: translation_user
+      DB_PASSWORD: translation_password
+    volumes:
+      # Only the .env file itself is bind-mounted - never the application
+      # directory or vendor/. This lets `artisan key:generate` (and any
+      # other command that edits .env) write straight back to the host
+      # file, while the application code and Composer dependencies stay
+      # exactly as installed into the image at build time. Mounting the
+      # whole project here would shadow the image's vendor/ with whatever
+      # (or nothing) exists on the host.
+      - ./.env:/var/www/html/.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  nginx:
+    image: nginx:stable-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    networks:
+      - app-network
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: translation_management
+      MYSQL_USER: translation_user
+      MYSQL_PASSWORD: translation_password
+      MYSQL_ROOT_PASSWORD: root_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - app-network
+
+volumes:
+  # Named volume, internal to Docker - not a host bind mount. `docker
+  # compose down -v` permanently deletes it (see README).
+  mysql-data:
+
+networks:
+  app-network:
+    driver: bridge
