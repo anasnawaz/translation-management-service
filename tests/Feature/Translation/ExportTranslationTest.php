@@ -122,6 +122,96 @@ class ExportTranslationTest extends TestCase
         ], $response->json());
     }
 
+    public function test_mixed_case_repeated_array_tag_filter_works_in_export(): void
+    {
+        $this->actingAsUser();
+        $this->activeLocale('en', 'English');
+        $this->createTranslation(
+            translationKey: $this->createTranslationKey(key: 'web.only'),
+            content: 'Web content',
+            tags: ['web']
+        );
+        $this->createTranslation(
+            translationKey: $this->createTranslationKey(key: 'mobile.only'),
+            content: 'Mobile content',
+            tags: ['mobile']
+        );
+
+        $response = $this->getJson('/api/locales/en/translations/export?tags[]=Web');
+
+        $response->assertOk();
+        $this->assertSame(['web.only' => 'Web content'], $response->json());
+    }
+
+    public function test_repeated_array_export_tags_are_trimmed_and_deduplicated_before_the_max_count_check(): void
+    {
+        $this->actingAsUser();
+        $this->activeLocale('en', 'English');
+        $this->createTranslation(
+            translationKey: $this->createTranslationKey(key: 'web.only'),
+            content: 'Web content',
+            tags: ['web']
+        );
+
+        // 25 raw `tags[]` entries - all case/whitespace variants of the
+        // same tag. If they were not trimmed, lowercased, and
+        // de-duplicated *before* the `max:20` rule runs, this request
+        // would be rejected as carrying too many tags.
+        $variants = array_map(
+            fn (int $i): string => $i % 2 === 0 ? ' Web ' : 'WEB',
+            range(1, 25)
+        );
+
+        $query = collect($variants)
+            ->map(fn (string $tag): string => 'tags[]='.urlencode($tag))
+            ->implode('&');
+
+        $response = $this->getJson('/api/locales/en/translations/export?'.$query);
+
+        $response->assertOk();
+        $this->assertSame(['web.only' => 'Web content'], $response->json());
+    }
+
+    public function test_comma_separated_export_tag_filter_still_works_case_insensitively(): void
+    {
+        $this->actingAsUser();
+        $this->activeLocale('en', 'English');
+        $this->createTranslation(
+            translationKey: $this->createTranslationKey(key: 'web.only'),
+            content: 'Web content',
+            tags: ['web']
+        );
+        $this->createTranslation(
+            translationKey: $this->createTranslationKey(key: 'mobile.only'),
+            content: 'Mobile content',
+            tags: ['mobile']
+        );
+        $this->createTranslation(
+            translationKey: $this->createTranslationKey(key: 'desktop.only'),
+            content: 'Desktop content',
+            tags: ['desktop']
+        );
+
+        $response = $this->getJson('/api/locales/en/translations/export?tags=Web,MOBILE');
+
+        $response->assertOk();
+        $this->assertSame([
+            'web.only' => 'Web content',
+            'mobile.only' => 'Mobile content',
+        ], $response->json());
+    }
+
+    public function test_nested_array_export_tag_values_are_rejected_with_a_422(): void
+    {
+        $this->actingAsUser();
+        $this->activeLocale('en', 'English');
+
+        $response = $this->getJson('/api/locales/en/translations/export?tags[0]=web&tags[1][]=x&tags[1][]=y');
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['tags.1']);
+    }
+
     public function test_invalid_locale_returns_a_clean_404_response(): void
     {
         $this->actingAsUser();

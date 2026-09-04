@@ -2,8 +2,10 @@
 
 namespace Tests\Feature\Translation;
 
+use App\Models\Translation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Concerns\InteractsWithTranslationApi;
 use Tests\TestCase;
 
@@ -56,6 +58,83 @@ class ListTranslationTest extends TestCase
 
         $this->assertCount(5, $seenIds);
         $this->assertCount(5, array_unique($seenIds));
+    }
+
+    /**
+     * `created_at`/`updated_at` are not unique - several translations can
+     * share the exact same timestamp (e.g. ones created moments apart, or
+     * batch-generated). Without a tie-breaker, cursorPaginate() would have
+     * no deterministic way to resume from the last row of a page whenever
+     * timestamps tie, and rows could be skipped or repeated across pages.
+     * This forces every translation in the set to share one identical
+     * timestamp on the sorted column, so the *only* thing that can produce
+     * a stable order is the `id` tie-breaker.
+     */
+    #[DataProvider('deterministicSortColumnProvider')]
+    public function test_cursor_pagination_is_deterministic_when_the_sort_column_has_duplicate_values(
+        string $sortBy,
+        string $sortDirection
+    ): void {
+        $this->actingAsUser();
+
+        $tiedTimestamp = now()->startOfSecond();
+        $expectedIds = [];
+
+        for ($i = 0; $i < 5; $i++) {
+            $translation = $this->createTranslation(content: "tied content {$i}");
+
+            // Bypass Eloquent's automatic touch-on-save so every row ends
+            // up with the *exact* same timestamp, on both MySQL and
+            // SQLite, regardless of how quickly the loop runs.
+            Translation::query()
+                ->whereKey($translation->id)
+                ->update([$sortBy => $tiedTimestamp]);
+
+            $expectedIds[] = $translation->id;
+        }
+
+        $seenIds = [];
+        $cursor = null;
+
+        do {
+            $url = "/api/translations?per_page=2&sort_by={$sortBy}&sort_direction={$sortDirection}"
+                .($cursor ? '&cursor='.$cursor : '');
+
+            $response = $this->getJson($url)->assertOk();
+
+            foreach ($response->json('data') as $item) {
+                $seenIds[] = $item['id'];
+            }
+
+            $cursor = $response->json('meta.next_cursor');
+        } while ($cursor !== null);
+
+        // Every expected id was returned, none skipped, none repeated.
+        $this->assertCount(count($expectedIds), $seenIds);
+        $this->assertCount(count($expectedIds), array_unique($seenIds));
+        $this->assertEqualsCanonicalizing($expectedIds, $seenIds);
+
+        // Since every row ties on the primary sort column, ordering can
+        // only have come from the `id` tie-breaker, applied in the same
+        // direction as the primary sort.
+        $expectedOrder = $sortDirection === 'asc'
+            ? $expectedIds
+            : array_reverse($expectedIds);
+
+        $this->assertSame($expectedOrder, $seenIds);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function deterministicSortColumnProvider(): array
+    {
+        return [
+            'created_at asc' => ['created_at', 'asc'],
+            'created_at desc' => ['created_at', 'desc'],
+            'updated_at asc' => ['updated_at', 'asc'],
+            'updated_at desc' => ['updated_at', 'desc'],
+        ];
     }
 
     public function test_per_page_is_validated_and_capped_at_the_maximum(): void
@@ -166,6 +245,83 @@ class ListTranslationTest extends TestCase
         sort($contents);
 
         $this->assertSame(['mobile only', 'web only'], $contents);
+    }
+
+    public function test_repeated_array_tag_filter_matches_case_insensitively(): void
+    {
+        $this->actingAsUser();
+        $this->createTranslation(tags: ['web']);
+        $this->createTranslation(tags: ['mobile']);
+
+        $response = $this->getJson('/api/translations?tags[]=Web');
+
+        $response->assertOk();
+        $this->assertCount(1, $response->json('data'));
+        $this->assertSame(['web'], $response->json('data.0.tags'));
+    }
+
+    public function test_repeated_array_tags_are_trimmed_and_deduplicated_before_the_max_count_check(): void
+    {
+        $this->actingAsUser();
+        $this->createTranslation(content: 'web content', tags: ['web']);
+
+        // 25 raw `tags[]` entries - all case/whitespace variants of the
+        // same tag. If they were not trimmed, lowercased, and
+        // de-duplicated *before* the `max:20` rule runs, this request
+        // would be rejected as carrying too many tags, even though it
+        // represents exactly one real tag.
+        $variants = array_map(
+            fn (int $i): string => $i % 2 === 0 ? ' Web ' : 'WEB',
+            range(1, 25)
+        );
+
+        $query = collect($variants)
+            ->map(fn (string $tag): string => 'tags[]='.urlencode($tag))
+            ->implode('&');
+
+        $response = $this->getJson('/api/translations?'.$query);
+
+        $response->assertOk();
+        $this->assertCount(1, $response->json('data'));
+        $this->assertSame('web content', $response->json('data.0.content'));
+    }
+
+    public function test_repeated_array_tag_values_with_surrounding_whitespace_are_trimmed(): void
+    {
+        $this->actingAsUser();
+        $this->createTranslation(content: 'web content', tags: ['web']);
+
+        $response = $this->getJson('/api/translations?tags[]='.urlencode('  Web  '));
+
+        $response->assertOk();
+        $this->assertCount(1, $response->json('data'));
+        $this->assertSame('web content', $response->json('data.0.content'));
+    }
+
+    public function test_comma_separated_tag_filter_still_works_case_insensitively(): void
+    {
+        $this->actingAsUser();
+        $this->createTranslation(content: 'web content', tags: ['web']);
+        $this->createTranslation(content: 'mobile content', tags: ['mobile']);
+        $this->createTranslation(content: 'desktop content', tags: ['desktop']);
+
+        $response = $this->getJson('/api/translations?tags=Web,MOBILE');
+
+        $response->assertOk();
+        $contents = array_column($response->json('data'), 'content');
+        sort($contents);
+
+        $this->assertSame(['mobile content', 'web content'], $contents);
+    }
+
+    public function test_nested_array_tag_values_are_rejected_with_a_422(): void
+    {
+        $this->actingAsUser();
+
+        $response = $this->getJson('/api/translations?tags[0]=web&tags[1][]=x&tags[1][]=y');
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors(['tags.1']);
     }
 
     public function test_content_search_works_using_sqlites_like_fallback(): void

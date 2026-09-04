@@ -9,7 +9,7 @@ The service exposes a JSON API for storing translation strings under a shared `k
 ## 2. Features
 
 - Sanctum bearer-token authentication (register, login, logout, current user).
-- Translation CRUD scoped to authenticated users.
+- Translation CRUD restricted to authenticated users.
 - Multi-locale support with an `is_active` flag controlling which locales accept new translations.
 - Tagging, with automatic normalization and de-duplication.
 - Search by key prefix, content, locale, tags, or a combined `search` parameter.
@@ -214,6 +214,8 @@ curl "http://localhost:8000/api/translations?per_page=50&cursor=<next_cursor>" -
 
 `sort_by`/`sort_direction`/other filters must stay identical between requests for a cursor to remain valid, since the cursor encodes a position relative to that specific ordering.
 
+`sort_by=created_at` and `sort_by=updated_at` are not unique columns — multiple translations can share the exact same timestamp. When sorting by either of them, `id` (in the same direction as the primary sort) is automatically applied as a secondary tie-breaker, so pagination stays deterministic even when timestamps tie; `sort_by=id` is already unique and needs no tie-breaker.
+
 ## 14. Export examples
 
 ```bash
@@ -319,7 +321,7 @@ A real MySQL 8.0 instance was stood up and used to independently verify the item
 - `php artisan migrate:fresh --seed` completed successfully against MySQL.
 - `DESCRIBE translation_keys` confirmed `description` is `varchar(500)`, matching the `max:500` validation rule (section 20 background).
 - `SHOW CREATE TABLE translations` confirmed the `FULLTEXT` index on `content` is created on MySQL, and is absent from the SQLite test schema.
-- `php artisan test` against the MySQL connection: **99 of 101 tests passed.**
+- `php artisan test` against the MySQL connection: **112 of 114 tests passed.** All 13 tests introduced for deterministic cursor pagination and tag-filter normalization passed on MySQL.
 
 The 2 failing tests — both asserting content search results — are `test_content_search_works_using_sqlites_like_fallback` and `test_general_search_finds_matching_content`. Investigation via direct raw SQL confirmed this is **not an application defect**: InnoDB `FULLTEXT` indexes only become visible to `MATCH ... AGAINST` (and therefore Laravel's `whereFullText()`) after the inserting transaction **commits**. Laravel's `RefreshDatabase` test trait wraps each test in a transaction that is always rolled back, never committed, so a row inserted and searched within the same test is structurally invisible to `FULLTEXT` on MySQL — regardless of correctness. This is a known limitation of testing `FULLTEXT` under transactional test isolation, not a bug in this codebase; see section 26.
 
@@ -410,5 +412,5 @@ Since the application code is baked into the `app` image at build time (not bind
 
 - **Local export timing**: measured locally at approximately **0.82–0.98 seconds** for a **2.65MB** export response — not below 500ms. Do not treat 500ms as an achieved figure; it is not.
 - **Local startup overhead**: local Windows/PHP development environment startup overhead was measured at approximately **300ms**, independent of and additional to request-handling time — relevant context when interpreting any wall-clock figure measured locally rather than in a production-like environment.
-- **The automated `PerformanceTest` group is a regression smoke test**, not an authoritative SLA benchmark (see the class docblock in `tests/Feature/Performance/PerformanceTest.php` for the full reasoning). Its own SQLite-suite timings — reported for context only, not as a production claim — were, at time of writing: full normal suite — 101 tests, 329 assertions, **68.61s**; performance group alone (3 tests, 10 assertions) in ~0.3–0.4s. These numbers describe test-suite execution time on this development machine, not API response latency, and can vary considerably run to run depending on machine load, container/virtualization overhead, and whether OPcache is warm.
+- **The automated `PerformanceTest` group is a regression smoke test**, not an authoritative SLA benchmark (see the class docblock in `tests/Feature/Performance/PerformanceTest.php` for the full reasoning). Its own SQLite-suite timings — reported for context only, not as a production claim — were, at time of writing: full normal suite — 114 tests, 380 assertions, all passing. Observed execution time was approximately 1.7–1.9 seconds in the verification environment; performance group alone (3 tests, 10 assertions) in ~0.3–0.4s. These numbers describe test-suite execution time, not API response latency or an SLA benchmark, and can vary considerably run to run depending on machine load, container/virtualization overhead, and whether OPcache is warm.
 - No production-representative (real MySQL, OPcache-warmed, non-test-harness) latency benchmark has been produced for this document. Section 26 lists this as a known limitation.

@@ -231,8 +231,10 @@ paths:
             Filter by tags; a translation matches if it has ANY of the
             given tags (OR behavior). Accepts either a comma-separated
             string (`tags=web,mobile`) or repeated array parameters
-            (`tags[]=web&tags[]=mobile`). Maximum 20 tags, each up to 50
-            characters.
+            (`tags[]=web&tags[]=mobile`) - both are normalized identically:
+            each tag is lowercased, trimmed, empty values are removed, and
+            duplicates are removed before filtering. Maximum 20 tags (after
+            de-duplication), each up to 50 characters.
           style: form
           explode: true
           schema:
@@ -254,7 +256,13 @@ paths:
             default: 25
         - name: sort_by
           in: query
-          description: Defaults to `id`.
+          description: >-
+            Defaults to `id`. `created_at`/`updated_at` are not unique
+            columns, so when sorting by either of them `id` (in the same
+            direction as `sort_direction`) is automatically applied as a
+            secondary tie-breaker, keeping cursor pagination deterministic
+            even when timestamps tie. `id` is already unique and needs no
+            tie-breaker.
           schema:
             type: string
             enum: [id, created_at, updated_at]
@@ -545,8 +553,10 @@ paths:
             Filter by tags; a translation matches if it has ANY of the
             given tags (OR behavior). Accepts either a comma-separated
             string (`tags=web,mobile`) or repeated array parameters
-            (`tags[]=web&tags[]=mobile`). Maximum 20 tags, each up to 50
-            characters.
+            (`tags[]=web&tags[]=mobile`) - both are normalized identically:
+            each tag is lowercased, trimmed, empty values are removed, and
+            duplicates are removed before filtering. Maximum 20 tags (after
+            de-duplication), each up to 50 characters.
           style: form
           explode: true
           schema:

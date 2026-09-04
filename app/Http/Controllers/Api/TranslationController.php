@@ -109,8 +109,22 @@ class TranslationController extends Controller
             }
         );
 
+        // `id` is already unique, so it needs no tie-breaker. `created_at`
+        // and `updated_at` are not unique (multiple translations can share
+        // the same timestamp, especially ones created in the same request
+        // or via the batch generator), and cursorPaginate() requires a
+        // deterministic ordering to build reliable cursors - without a
+        // tie-breaker, rows with identical timestamps could be skipped or
+        // repeated across pages. Adding `id` as a secondary sort (in the
+        // same direction as the primary sort) resolves ties deterministically
+        // without changing the primary ordering the caller asked for.
+        $query->orderBy($sortBy, $sortDirection);
+
+        if ($sortBy !== 'id') {
+            $query->orderBy('id', $sortDirection);
+        }
+
         $translations = $query
-            ->orderBy($sortBy, $sortDirection)
             ->cursorPaginate($perPage)
             ->withQueryString();
 
